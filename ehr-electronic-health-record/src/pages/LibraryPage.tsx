@@ -15,28 +15,16 @@ import {
   X,
 } from "lucide-react"
 
+import { SAMPLE_LIBRARY_FILES, type LibraryFileKind } from "@/lib/library-files"
 import { cn } from "@/lib/utils"
 
-type FileKind = "image" | "document" | "sheet"
 type LibraryItem = {
   id: string
   name: string
-  kind: FileKind
+  kind: LibraryFileKind
   sizeKb: number
   modifiedAt: string
 }
-
-const SAMPLE_FILES: LibraryItem[] = [
-  { id: "f1", name: "John_Walker_Knee_Xray_Mar27.jpeg", kind: "image", sizeKb: 302, modifiedAt: "2026-03-27T09:12:00" },
-  { id: "f2", name: "Emily_Johnson_Chest_CT_Mar24.jpeg", kind: "image", sizeKb: 638, modifiedAt: "2026-03-24T11:45:00" },
-  { id: "f3", name: "Michael_Brown_Elbow_Xray_Mar23.jpeg", kind: "image", sizeKb: 117, modifiedAt: "2026-03-23T15:18:00" },
-  { id: "f4", name: "Discharge_Summary_Sophia_Davis.pdf", kind: "document", sizeKb: 512, modifiedAt: "2026-03-21T18:02:00" },
-  { id: "f5", name: "Lab_Report_James_Wilson.pdf", kind: "document", sizeKb: 253, modifiedAt: "2026-03-21T14:36:00" },
-  { id: "f6", name: "Cardiology_Notes_Olivia_Martin.pdf", kind: "document", sizeKb: 512, modifiedAt: "2026-03-21T12:21:00" },
-  { id: "f7", name: "Followup_Plan_Daniel_Thompson.pdf", kind: "document", sizeKb: 284, modifiedAt: "2026-03-21T10:03:00" },
-  { id: "f8", name: "Care_Plan_Ava_Anderson.docx", kind: "document", sizeKb: 217, modifiedAt: "2026-03-12T08:57:00" },
-  { id: "f9", name: "Vitals_Trend_March_US_Clinic.xlsx", kind: "sheet", sizeKb: 156, modifiedAt: "2026-03-12T09:18:00" },
-]
 
 type ViewMode = "list" | "grid"
 type FilterMode = "all" | "images" | "files"
@@ -68,7 +56,7 @@ function formatSize(kb: number) {
   return `${kb} KB`
 }
 
-function iconForKind(kind: FileKind) {
+function iconForKind(kind: LibraryFileKind) {
   if (kind === "image") return <FileImage className="size-4 text-blue-500" />
   if (kind === "sheet") return <FileSpreadsheet className="size-4 text-emerald-600" />
   return <FileText className="size-4 text-rose-500" />
@@ -91,7 +79,7 @@ export default function LibraryPage() {
   })
 
   const filtered = useMemo(() => {
-    return SAMPLE_FILES.filter((file) => {
+    return (SAMPLE_LIBRARY_FILES as LibraryItem[]).filter((file) => {
       const matchesQuery = file.name.toLowerCase().includes(query.toLowerCase())
       const matchesFilter =
         filter === "all" ||
@@ -162,7 +150,7 @@ export default function LibraryPage() {
     <div className="min-h-screen bg-white px-5 py-6 md:px-8">
       <div className="mx-auto w-full max-w-6xl rounded-3xl border border-[#e8ecef] bg-white/95 p-5 shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur-sm md:p-7">
         <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-3xl font-semibold tracking-tight text-[#171717]">Library</h1>
+          <h1 className="text-3xl font-semibold tracking-tight text-[#171717]">Files</h1>
           <button
             type="button"
             onClick={() => {

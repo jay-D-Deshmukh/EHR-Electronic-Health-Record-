@@ -3,7 +3,6 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   CalendarDays,
-  ClipboardList,
   Download,
   FileUp,
   FileText,
@@ -13,6 +12,7 @@ import {
   Upload,
 } from "lucide-react"
 
+import { SAMPLE_LIBRARY_FILES } from "@/lib/library-files"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -67,6 +67,10 @@ export default function UserDashboardPage() {
 
   const [timeline, setTimeline] = useState<TimelineEntry[]>(INITIAL_TIMELINE)
   const [summaryRange, setSummaryRange] = useState<SummaryRange>("90d")
+  const [summaryGenerated, setSummaryGenerated] = useState(false)
+  const [selectedUploadIds, setSelectedUploadIds] = useState<string[]>([])
+  const [generatedTimelineIds, setGeneratedTimelineIds] = useState<string[]>([])
+  const [summaryDate, setSummaryDate] = useState("")
 
   const filteredTimelineForSummary = useMemo(() => {
     if (summaryRange === "all") return timeline
@@ -86,9 +90,51 @@ export default function UserDashboardPage() {
         ? "Last 90 days"
         : "All time"
 
+  const libraryTimelineFiles = useMemo<TimelineEntry[]>(
+    () =>
+      SAMPLE_LIBRARY_FILES.map((file) => ({
+        id: `lib-${file.id}`,
+        period: new Date(file.modifiedAt).toLocaleString(undefined, {
+          month: "short",
+          year: "numeric",
+        }),
+        title: "Library file available",
+        detail: "File from Library section",
+        attachment: file.name,
+        eventDate: file.modifiedAt.slice(0, 10),
+      })),
+    []
+  )
+
+  const uploadedTimelineFiles = useMemo(() => {
+    const timelineUploads = filteredTimelineForSummary.filter((item) => !!item.attachment)
+    const combined = [...timelineUploads, ...libraryTimelineFiles]
+    const uniqueById = new Map(combined.map((item) => [item.id, item]))
+    const result = Array.from(uniqueById.values())
+    if (!summaryDate) return result
+    return result.filter((item) => (item.eventDate ?? "") === summaryDate)
+  }, [filteredTimelineForSummary, libraryTimelineFiles, summaryDate])
+
+  const visibleUploadedIds = useMemo(
+    () => new Set(uploadedTimelineFiles.map((item) => item.id)),
+    [uploadedTimelineFiles]
+  )
+
+  const effectiveSelectedUploadIds = useMemo(
+    () => selectedUploadIds.filter((id) => visibleUploadedIds.has(id)),
+    [selectedUploadIds, visibleUploadedIds]
+  )
+
+  const generatedTimelineEntries = useMemo(
+    () => generatedTimelineIds
+      .map((id) => uploadedTimelineFiles.find((item) => item.id === id))
+      .filter((item): item is TimelineEntry => !!item),
+    [generatedTimelineIds, uploadedTimelineFiles]
+  )
+
   const summaryText = useMemo(() => {
-    const latestEvent = filteredTimelineForSummary[0]
-    const timelineSummary = filteredTimelineForSummary
+    const latestEvent = generatedTimelineEntries[0]
+    const timelineSummary = generatedTimelineEntries
       .slice(0, 4)
       .map((item) => {
         const when = item.eventDate ?? item.period
@@ -106,15 +152,17 @@ export default function UserDashboardPage() {
       "Recent vitals: BMI 22.4, Weight 92 kg, Height 175 cm, BP 124/80",
       "Barriers: Fear of medication, Fear of insulin",
       `Summary window: ${summaryRangeLabel}`,
+      `Uploaded timeline files in window: ${uploadedTimelineFiles.length}`,
+      `Files used for generated summary: ${generatedTimelineEntries.length}`,
       "",
-      `Latest timeline event: ${latestEvent?.period ?? "-"} - ${latestEvent?.title ?? "-"}`,
+      `Latest selected event: ${latestEvent?.period ?? "-"} - ${latestEvent?.title ?? "-"}`,
       "",
-      "Recent timeline highlights:",
-      timelineSummary || "- No events available",
+      "Timeline highlights derived from uploaded files:",
+      timelineSummary || "- No generated summary available yet",
       "",
       `Generated on: ${new Date().toLocaleString()}`,
     ].join("\n")
-  }, [filteredTimelineForSummary, summaryRangeLabel])
+  }, [generatedTimelineEntries, summaryRangeLabel, uploadedTimelineFiles.length])
 
   function downloadSummary() {
     const blob = new Blob([summaryText], { type: "text/plain;charset=utf-8" })
@@ -126,6 +174,24 @@ export default function UserDashboardPage() {
     a.click()
     a.remove()
     URL.revokeObjectURL(url)
+  }
+
+  function toggleUploadSelection(id: string) {
+    setSelectedUploadIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    )
+    setSummaryGenerated(false)
+  }
+
+  function generateSummaryFromSelection() {
+    if (uploadedTimelineFiles.length === 0) return
+    const selectedEntries = uploadedTimelineFiles.filter((item) =>
+      effectiveSelectedUploadIds.includes(item.id)
+    )
+    const usedEntries =
+      selectedEntries.length > 0 ? selectedEntries : [uploadedTimelineFiles[0]]
+    setGeneratedTimelineIds(usedEntries.map((item) => item.id))
+    setSummaryGenerated(true)
   }
 
   function addTimelineFromFiles(files: FileList | null) {
@@ -143,6 +209,7 @@ export default function UserDashboardPage() {
       eventDate: new Date().toISOString().slice(0, 10),
     }
     setTimeline((prev) => [entry, ...prev])
+    setSummaryGenerated(false)
   }
 
   return (
@@ -322,11 +389,19 @@ export default function UserDashboardPage() {
                     </button>
                   ))}
                 </div>
+                <input
+                  type="date"
+                  value={summaryDate}
+                  onChange={(e) => setSummaryDate(e.target.value)}
+                  className="h-8 rounded-md border border-gray-200 bg-white px-2 text-xs text-foreground outline-none focus:border-gray-300"
+                  aria-label="Select timeline date"
+                />
                 <Button
                   type="button"
                   size="sm"
                   className="gap-2 bg-[#001a5e] hover:bg-[#001a5e]/90"
                   onClick={downloadSummary}
+                  disabled={!summaryGenerated || generatedTimelineEntries.length === 0}
                 >
                   <Download className="size-4" />
                   Download summary
@@ -336,24 +411,103 @@ export default function UserDashboardPage() {
             <CardContent>
               <div className="rounded-xl border border-gray-100 bg-[#fafafa] p-4">
                 <p className="text-sm leading-6 text-[#334155]">
-                  Ahmed Ali Hussain is currently being managed for obesity and
-                  uncontrolled Type 2 diabetes mellitus. Latest recorded vitals
-                  indicate BMI 22.4, weight 92 kg, height 175 cm, and blood
-                  pressure 124/80. Current care barriers include fear of
-                  medication and fear of insulin. The timeline contains{" "}
+                  Generate a clinical summary from the uploaded timeline files.
+                  The summary engine uses files attached through{" "}
                   <span className="font-medium text-[#0f172a]">
-                    {filteredTimelineForSummary.length}
+                    Upload to timeline
                   </span>{" "}
-                  events in{" "}
+                  within{" "}
                   <span className="font-medium text-[#0f172a]">
                     {summaryRangeLabel}
-                  </span>
-                  , with the most recent event as{" "}
+                  </span>{" "}
+                  and currently found{" "}
                   <span className="font-medium text-[#0f172a]">
-                    {filteredTimelineForSummary[0]?.title ?? "N/A"}
+                    {uploadedTimelineFiles.length}
                   </span>
-                  .
+                  upload-based timeline event(s).
                 </p>
+                <div className="mt-4 rounded-lg border border-gray-200 bg-white p-3">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Select timeline files for summary
+                  </p>
+                  <div className="mt-2 space-y-2">
+                    {uploadedTimelineFiles.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">
+                        No uploaded files in the selected time range.
+                      </p>
+                    ) : (
+                      uploadedTimelineFiles.map((item) => (
+                        <label
+                          key={item.id}
+                          className="flex cursor-pointer items-start gap-2 rounded-md border border-gray-100 px-2.5 py-2 hover:bg-gray-50"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={effectiveSelectedUploadIds.includes(item.id)}
+                            onChange={() => toggleUploadSelection(item.id)}
+                            className="mt-0.5"
+                          />
+                          <span className="min-w-0">
+                            <span className="block truncate text-sm font-medium text-[#0f172a]">
+                              {item.attachment}
+                            </span>
+                            <span className="block text-xs text-muted-foreground">
+                              {item.eventDate ?? item.period}
+                            </span>
+                          </span>
+                        </label>
+                      ))
+                    )}
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    If no timeline is selected, summary uses the most recent uploaded file.
+                  </p>
+                </div>
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={generateSummaryFromSelection}
+                    disabled={uploadedTimelineFiles.length === 0}
+                  >
+                    Generate summary from uploads
+                  </Button>
+                  {summaryDate && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setSummaryDate("")}
+                    >
+                      Clear date
+                    </Button>
+                  )}
+                  <span className="font-medium text-[#0f172a]">
+                    {uploadedTimelineFiles.length === 0
+                      ? "No files found for the selected timeline date."
+                      : summaryGenerated
+                        ? generatedTimelineEntries.length === 1 &&
+                          effectiveSelectedUploadIds.length === 0
+                          ? "Summary generated from most recent uploaded timeline file."
+                          : "Summary generated from selected timeline file(s)."
+                        : "Select timeline files or generate with most recent file."}
+                  </span>
+                </div>
+                {summaryGenerated && generatedTimelineEntries.length > 0 && (
+                  <div className="mt-4 rounded-lg border border-gray-200 bg-white p-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Included uploaded files
+                    </p>
+                    <ul className="mt-2 space-y-1 text-sm text-[#334155]">
+                      {generatedTimelineEntries.slice(0, 5).map((item) => (
+                        <li key={item.id} className="truncate">
+                          - {item.attachment}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -423,51 +577,6 @@ export default function UserDashboardPage() {
             </CardContent>
           </Card>
         </div>
-
-        {/* Medical history snippet (reference) */}
-        <Card className="border border-gray-200/80 bg-white shadow-sm">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <div className="flex items-center gap-2">
-              <ClipboardList className="size-5 text-[#001a5e]" />
-              <CardTitle className="text-base font-semibold">
-                Medical history
-              </CardTitle>
-            </div>
-            <Button variant="link" size="sm" className="text-[#001a5e]">
-              Edit
-            </Button>
-          </CardHeader>
-          <CardContent>
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {[
-                { label: "Chronic disease", value: "Type 2 diabetes mellitus" },
-                { label: "Diabetes emergencies", value: "None recorded" },
-                { label: "Surgery", value: "Liposuction (2019)" },
-                { label: "Family disease", value: "Maternal T2DM" },
-              ].map((row) => (
-                <div
-                  key={row.label}
-                  className="rounded-xl border border-gray-100 bg-[#fafafa] p-4"
-                >
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    {row.label}
-                  </p>
-                  <p className="mt-2 text-sm font-medium text-[#0f172a]">
-                    {row.value}
-                  </p>
-                </div>
-              ))}
-              <div className="rounded-xl border border-gray-100 bg-[#fafafa] p-4 sm:col-span-2 lg:col-span-3">
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                  Diabetes-related complication
-                </p>
-                <p className="mt-2 text-sm font-medium text-[#0f172a]">
-                  Early retinopathy screening scheduled; no proliferative changes.
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
       </div>
     </div>
   )
