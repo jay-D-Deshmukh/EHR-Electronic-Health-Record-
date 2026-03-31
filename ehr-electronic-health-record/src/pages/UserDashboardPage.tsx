@@ -1,10 +1,12 @@
-import { useId, useRef, useState } from "react"
+import { useId, useMemo, useRef, useState } from "react"
 import {
   ArrowDownRight,
   ArrowUpRight,
   CalendarDays,
   ClipboardList,
+  Download,
   FileUp,
+  FileText,
   Mail,
   Pencil,
   Phone,
@@ -26,14 +28,10 @@ type TimelineEntry = {
   title: string
   detail: string
   attachment?: string
+  eventDate?: string
 }
 
-type MedicalDoc = {
-  id: string
-  name: string
-  uploadedAt: string
-  type: string
-}
+type SummaryRange = "30d" | "90d" | "all"
 
 const INITIAL_TIMELINE: TimelineEntry[] = [
   {
@@ -41,33 +39,21 @@ const INITIAL_TIMELINE: TimelineEntry[] = [
     period: "Dec 2022",
     title: "Type 2 diagnosis",
     detail: "A1c: 8.2%",
+    eventDate: "2022-12-10",
   },
   {
     id: "t2",
     period: "Jan 2022",
     title: "Pre-diabetic follow-up",
     detail: "Lifestyle counseling",
+    eventDate: "2022-01-14",
   },
   {
     id: "t3",
     period: "Jul 2021",
     title: "Annual labs",
     detail: "Fasting glucose elevated",
-  },
-]
-
-const INITIAL_DOCS: MedicalDoc[] = [
-  {
-    id: "d1",
-    name: "Lab_report_Dec2024.pdf",
-    uploadedAt: "2024-12-02",
-    type: "Lab",
-  },
-  {
-    id: "d2",
-    name: "Chest_XRay_overview.png",
-    uploadedAt: "2024-08-14",
-    type: "Imaging",
+    eventDate: "2021-07-22",
   },
 ]
 
@@ -76,27 +62,70 @@ function makeId(prefix: string) {
 }
 
 export default function UserDashboardPage() {
-  const docsInputId = useId()
   const timelineInputId = useId()
-  const docsInputRef = useRef<HTMLInputElement>(null)
   const timelineInputRef = useRef<HTMLInputElement>(null)
 
   const [timeline, setTimeline] = useState<TimelineEntry[]>(INITIAL_TIMELINE)
-  const [documents, setDocuments] = useState<MedicalDoc[]>(INITIAL_DOCS)
+  const [summaryRange, setSummaryRange] = useState<SummaryRange>("90d")
 
-  function addDocumentsFromFiles(files: FileList | null) {
-    if (!files?.length) return
-    const next: MedicalDoc[] = []
-    for (let i = 0; i < files.length; i++) {
-      const f = files[i]
-      next.push({
-        id: makeId("doc"),
-        name: f.name,
-        uploadedAt: new Date().toISOString().slice(0, 10),
-        type: "Upload",
+  const filteredTimelineForSummary = useMemo(() => {
+    if (summaryRange === "all") return timeline
+    const days = summaryRange === "30d" ? 30 : 90
+    const cutoff = new Date()
+    cutoff.setDate(cutoff.getDate() - days)
+    return timeline.filter((item) => {
+      if (!item.eventDate) return false
+      return new Date(item.eventDate) >= cutoff
+    })
+  }, [summaryRange, timeline])
+
+  const summaryRangeLabel =
+    summaryRange === "30d"
+      ? "Last 30 days"
+      : summaryRange === "90d"
+        ? "Last 90 days"
+        : "All time"
+
+  const summaryText = useMemo(() => {
+    const latestEvent = filteredTimelineForSummary[0]
+    const timelineSummary = filteredTimelineForSummary
+      .slice(0, 4)
+      .map((item) => {
+        const when = item.eventDate ?? item.period
+        return `- ${when}: ${item.title} (${item.detail})`
       })
-    }
-    setDocuments((prev) => [...next, ...prev])
+      .join("\n")
+
+    return [
+      "Patient Summary",
+      "===============",
+      "",
+      "Patient: Ahmed Ali Hussain",
+      "DOB: 12 Dec 1992",
+      "Known conditions: Obesity, Uncontrolled Type 2 diabetes mellitus",
+      "Recent vitals: BMI 22.4, Weight 92 kg, Height 175 cm, BP 124/80",
+      "Barriers: Fear of medication, Fear of insulin",
+      `Summary window: ${summaryRangeLabel}`,
+      "",
+      `Latest timeline event: ${latestEvent?.period ?? "-"} - ${latestEvent?.title ?? "-"}`,
+      "",
+      "Recent timeline highlights:",
+      timelineSummary || "- No events available",
+      "",
+      `Generated on: ${new Date().toLocaleString()}`,
+    ].join("\n")
+  }, [filteredTimelineForSummary, summaryRangeLabel])
+
+  function downloadSummary() {
+    const blob = new Blob([summaryText], { type: "text/plain;charset=utf-8" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = `health-summary-${new Date().toISOString().slice(0, 10)}.txt`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
   }
 
   function addTimelineFromFiles(files: FileList | null) {
@@ -111,17 +140,9 @@ export default function UserDashboardPage() {
       title: "Document uploaded",
       detail: "New file added to your record",
       attachment: f.name,
+      eventDate: new Date().toISOString().slice(0, 10),
     }
     setTimeline((prev) => [entry, ...prev])
-    setDocuments((prev) => [
-      {
-        id: makeId("doc"),
-        name: f.name,
-        uploadedAt: new Date().toISOString().slice(0, 10),
-        type: "Timeline",
-      },
-      ...prev,
-    ])
   }
 
   return (
@@ -132,8 +153,7 @@ export default function UserDashboardPage() {
             Your health dashboard
           </h1>
           <p className="text-sm text-muted-foreground">
-            Patient profile overview, document repository, and timeline — upload
-            files anytime.
+            Patient profile overview and timeline — upload files anytime.
           </p>
         </header>
 
@@ -271,7 +291,73 @@ export default function UserDashboardPage() {
           </CardContent>
         </Card>
 
-        <div className="grid gap-6 lg:grid-cols-2">
+        <div className="grid gap-6">
+          <Card className="border border-gray-200/80 bg-white shadow-sm">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
+              <div className="flex items-center gap-2">
+                <FileText className="size-5 text-[#001a5e]" />
+                <CardTitle className="text-base font-semibold">
+                  Patient summary
+                </CardTitle>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="inline-flex rounded-lg bg-muted p-1">
+                  {([
+                    ["30d", "30D"],
+                    ["90d", "90D"],
+                    ["all", "All"],
+                  ] as const).map(([key, label]) => (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setSummaryRange(key)}
+                      className={cn(
+                        "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                        summaryRange === key
+                          ? "bg-white text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  className="gap-2 bg-[#001a5e] hover:bg-[#001a5e]/90"
+                  onClick={downloadSummary}
+                >
+                  <Download className="size-4" />
+                  Download summary
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="rounded-xl border border-gray-100 bg-[#fafafa] p-4">
+                <p className="text-sm leading-6 text-[#334155]">
+                  Ahmed Ali Hussain is currently being managed for obesity and
+                  uncontrolled Type 2 diabetes mellitus. Latest recorded vitals
+                  indicate BMI 22.4, weight 92 kg, height 175 cm, and blood
+                  pressure 124/80. Current care barriers include fear of
+                  medication and fear of insulin. The timeline contains{" "}
+                  <span className="font-medium text-[#0f172a]">
+                    {filteredTimelineForSummary.length}
+                  </span>{" "}
+                  events in{" "}
+                  <span className="font-medium text-[#0f172a]">
+                    {summaryRangeLabel}
+                  </span>
+                  , with the most recent event as{" "}
+                  <span className="font-medium text-[#0f172a]">
+                    {filteredTimelineForSummary[0]?.title ?? "N/A"}
+                  </span>
+                  .
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
           {/* Timeline + upload */}
           <Card className="border border-gray-200/80 bg-white shadow-sm">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
@@ -334,79 +420,6 @@ export default function UserDashboardPage() {
                   </div>
                 ))}
               </div>
-            </CardContent>
-          </Card>
-
-          {/* Medical documents repository */}
-          <Card className="border border-gray-200/80 bg-white shadow-sm">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
-              <div className="flex items-center gap-2">
-                <ClipboardList className="size-5 text-[#001a5e]" />
-                <CardTitle className="text-base font-semibold">
-                  Medical documents
-                </CardTitle>
-              </div>
-              <div>
-                <input
-                  ref={docsInputRef}
-                  id={docsInputId}
-                  type="file"
-                  className="sr-only"
-                  multiple
-                  accept=".pdf,.png,.jpg,.jpeg,.webp"
-                  onChange={(e) => {
-                    addDocumentsFromFiles(e.target.files)
-                    e.target.value = ""
-                  }}
-                />
-                <Button
-                  type="button"
-                  size="sm"
-                  className="gap-2 bg-[#001a5e] hover:bg-[#001a5e]/90"
-                  onClick={() => docsInputRef.current?.click()}
-                >
-                  <Upload className="size-4" />
-                  Upload
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="max-w-full overflow-x-auto rounded-lg border border-gray-100">
-                <table className="w-full min-w-[280px] text-left text-sm">
-                  <thead className="bg-muted/50 text-xs font-medium text-muted-foreground">
-                    <tr>
-                      <th className="px-4 py-3">Name</th>
-                      <th className="px-4 py-3">Type</th>
-                      <th className="hidden px-4 py-3 sm:table-cell">Uploaded</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {documents.map((doc) => (
-                      <tr
-                        key={doc.id}
-                        className={cn(
-                          "border-t border-gray-100",
-                          "hover:bg-muted/30"
-                        )}
-                      >
-                        <td className="max-w-[200px] truncate px-4 py-3 font-medium">
-                          {doc.name}
-                        </td>
-                        <td className="px-4 py-3 text-muted-foreground">
-                          {doc.type}
-                        </td>
-                        <td className="hidden px-4 py-3 text-muted-foreground sm:table-cell">
-                          {doc.uploadedAt}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <p className="mt-3 text-xs text-muted-foreground">
-                PDF and images are accepted. Files stay in this repository and can
-                be linked from timeline uploads.
-              </p>
             </CardContent>
           </Card>
         </div>
