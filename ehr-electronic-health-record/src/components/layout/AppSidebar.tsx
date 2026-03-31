@@ -21,7 +21,7 @@ type NavDef = {
 const NAV_ITEMS: NavDef[] = [
   { key: "grid", to: "/dashboard", label: "Dashboard", Icon: Grid2X2 },
   { key: "search", to: "/", label: "Search", Icon: Search },
-  { key: "library", to: "/compose", label: "Library", Icon: Library },
+  { key: "Files", to: "/compose", label: "Files", Icon: Library },
 ]
 
 type AppSidebarProps = {
