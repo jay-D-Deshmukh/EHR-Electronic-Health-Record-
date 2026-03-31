@@ -20,7 +20,7 @@ type NavDef = {
 
 const NAV_ITEMS: NavDef[] = [
   { key: "grid", to: "/dashboard", label: "Dashboard", Icon: Grid2X2 },
-  { key: "search", to: "/search", label: "Search", Icon: Search },
+  { key: "search", to: "/", label: "Search", Icon: Search },
   { key: "images", to: "/images", label: "Images", Icon: ImageIcon },
   { key: "edit", to: "/compose", label: "Compose", Icon: Pencil },
 ]
