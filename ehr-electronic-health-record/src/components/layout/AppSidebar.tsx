@@ -1,8 +1,8 @@
 import type { ComponentType } from "react"
 import {
   Grid2X2,
-  Image as ImageIcon,
-  Pencil,
+  Library,
+  PanelLeft,
   Search,
 } from "lucide-react"
 import { NavLink } from "react-router-dom"
@@ -21,15 +21,15 @@ type NavDef = {
 const NAV_ITEMS: NavDef[] = [
   { key: "grid", to: "/dashboard", label: "Dashboard", Icon: Grid2X2 },
   { key: "search", to: "/", label: "Search", Icon: Search },
-  { key: "images", to: "/images", label: "Images", Icon: ImageIcon },
-  { key: "edit", to: "/compose", label: "Compose", Icon: Pencil },
+  { key: "library", to: "/compose", label: "Library", Icon: Library },
 ]
 
 type AppSidebarProps = {
   expanded: boolean
+  onToggle: () => void
 }
 
-export function AppSidebar({ expanded }: AppSidebarProps) {
+export function AppSidebar({ expanded, onToggle }: AppSidebarProps) {
   const navLinkClass = ({ isActive }: { isActive: boolean }) =>
     cn(
       "flex items-center gap-3 rounded-xl py-2.5 text-sm font-medium transition-colors",
@@ -52,22 +52,32 @@ export function AppSidebar({ expanded }: AppSidebarProps) {
         <div
           className={cn(
             "flex shrink-0 items-center pb-2 pt-6",
-            expanded ? "justify-start px-4" : "justify-center px-0"
+            expanded ? "justify-between px-4" : "justify-center px-0"
           )}
         >
-          <NavLink
-            to="/"
-            end
-            className="flex items-center gap-3 rounded-lg outline-none ring-offset-2 focus-visible:ring-2 focus-visible:ring-ring"
-            title="Home"
-          >
-            <img src={logo} alt="" className="h-10 w-10 shrink-0 object-contain" />
-            {expanded && (
+          {expanded && (
+            <NavLink
+              to="/"
+              end
+              className="flex items-center gap-3 rounded-lg outline-none ring-offset-2 focus-visible:ring-2 focus-visible:ring-ring"
+              title="Home"
+            >
+              <img src={logo} alt="" className="h-10 w-10 shrink-0 object-contain" />
               <span className="truncate text-sm font-semibold text-[#1B1B1B]">
-                Health Assistant
+                AR360 Assistant
               </span>
-            )}
-          </NavLink>
+            </NavLink>
+          )}
+          <button
+            type="button"
+            onClick={onToggle}
+            className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            aria-expanded={expanded}
+            aria-label={expanded ? "Collapse sidebar" : "Expand sidebar"}
+            title={expanded ? "Collapse sidebar" : "Expand sidebar"}
+          >
+            <PanelLeft className="size-[18px]" strokeWidth={2} />
+          </button>
         </div>
 
         <nav
