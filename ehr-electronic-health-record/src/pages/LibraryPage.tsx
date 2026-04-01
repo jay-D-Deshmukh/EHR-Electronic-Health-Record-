@@ -1,440 +1,415 @@
-import { useEffect, useMemo, useRef, useState } from "react"
-import {
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  FileImage,
-  FileSpreadsheet,
-  FileText,
-  Grid2X2,
-  List,
-  LoaderCircle,
-  Search,
-  Upload,
-  UploadCloud,
-  X,
-} from "lucide-react"
+import { useMemo, useState } from "react"
+import { CalendarDays, ChevronRight, ChevronsUpDown, Plus, Search, UploadCloud, X } from "lucide-react"
 
-import { SAMPLE_LIBRARY_FILES, type LibraryFileKind } from "@/lib/library-files"
+import { Button } from "@/components/ui/button"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
 
-type LibraryItem = {
-  id: string
-  name: string
-  kind: LibraryFileKind
-  sizeKb: number
-  modifiedAt: string
+type ViewMode = "year" | "month" | "week"
+type FilterMode = "all" | "report" | "image" | "prescription" | "lab"
+type RecordItem = {
+  id: number
+  title: string
+  date: string
+  type: Exclude<FilterMode, "all"> | "document"
+  notes: string
+  fileName?: string
 }
 
-type ViewMode = "list" | "grid"
-type FilterMode = "all" | "images" | "files"
-type UploadStatus = "queued" | "uploading" | "done"
-type UploadItem = {
-  id: string
-  file: File
-  progress: number
-  status: UploadStatus
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+const TYPE_META: Record<RecordItem["type"], { label: string; badge: string; dot: string; icon: string }> = {
+  report: { label: "Report", badge: "bg-emerald-100 text-emerald-800", dot: "border-emerald-700", icon: "📄" },
+  image: { label: "Imaging", badge: "bg-blue-100 text-blue-800", dot: "border-blue-700", icon: "🩻" },
+  prescription: { label: "Prescription", badge: "bg-amber-100 text-amber-800", dot: "border-amber-700", icon: "💊" },
+  lab: { label: "Lab Result", badge: "bg-pink-100 text-pink-800", dot: "border-pink-700", icon: "🧪" },
+  document: { label: "Document", badge: "bg-lime-100 text-lime-800", dot: "border-lime-700", icon: "📋" },
 }
 
-function formatDateHeading(input: string) {
-  return new Date(input).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  })
+const INITIAL_RECORDS: RecordItem[] = [
+  { id: 1, title: "Cardiology follow-up report", date: "2025-11-18", type: "report", notes: "Reviewed ECG results. No arrhythmia detected." },
+  { id: 2, title: "Chest X-Ray - AP View", date: "2025-11-18", type: "image", notes: "Clear lung fields." },
+  { id: 3, title: "Metformin 500mg prescription", date: "2025-09-03", type: "prescription", notes: "Twice daily with meals." },
+  { id: 4, title: "HbA1c & Lipid Panel", date: "2025-09-03", type: "lab", notes: "HbA1c: 6.8%, LDL: 112 mg/dL." },
+  { id: 5, title: "Annual Physical Examination", date: "2025-06-14", type: "report", notes: "BP: 128/82. BMI: 24.3." },
+]
+
+function fmtDate(date: string) {
+  const [y, m, d] = date.split("-")
+  return `${Number(d)} ${MONTHS[Number(m) - 1]} ${y}`
 }
 
-function formatTime(input: string) {
-  return new Date(input).toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-  })
-}
-
-function formatSize(kb: number) {
-  if (kb >= 1024) return `${(kb / 1024).toFixed(1)} MB`
-  return `${kb} KB`
-}
-
-function iconForKind(kind: LibraryFileKind) {
-  if (kind === "image") return <FileImage className="size-4 text-blue-500" />
-  if (kind === "sheet") return <FileSpreadsheet className="size-4 text-emerald-600" />
-  return <FileText className="size-4 text-rose-500" />
+function weekStartIso(date: string) {
+  const d = new Date(`${date}T00:00:00`)
+  const s = new Date(d)
+  s.setDate(d.getDate() - d.getDay())
+  return s.toISOString().slice(0, 10)
 }
 
 export default function LibraryPage() {
-  const [query, setQuery] = useState("")
+  const [records, setRecords] = useState<RecordItem[]>(INITIAL_RECORDS)
+  const [view, setView] = useState<ViewMode>("year")
   const [filter, setFilter] = useState<FilterMode>("all")
-  const [view, setView] = useState<ViewMode>("list")
-  const [uploadOpen, setUploadOpen] = useState(false)
-  const [dragOver, setDragOver] = useState(false)
-  const [uploads, setUploads] = useState<UploadItem[]>([])
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const [openDates, setOpenDates] = useState<Record<string, boolean>>({
-    "2026-03-27": true,
-    "2026-03-24": true,
-    "2026-03-23": false,
-    "2026-03-21": true,
-    "2026-03-12": false,
-  })
+  const [collapseMap, setCollapseMap] = useState<Record<string, boolean>>({})
+  const [modalOpen, setModalOpen] = useState(false)
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [title, setTitle] = useState("")
+  const [date, setDate] = useState("")
+  const [type, setType] = useState<RecordItem["type"]>("report")
+  const [notes, setNotes] = useState("")
+  const [fileName, setFileName] = useState("")
+  const [search, setSearch] = useState("")
 
   const filtered = useMemo(() => {
-    return (SAMPLE_LIBRARY_FILES as LibraryItem[]).filter((file) => {
-      const matchesQuery = file.name.toLowerCase().includes(query.toLowerCase())
-      const matchesFilter =
-        filter === "all" ||
-        (filter === "images" && file.kind === "image") ||
-        (filter === "files" && file.kind !== "image")
-      return matchesQuery && matchesFilter
-    }).sort((a, b) => +new Date(b.modifiedAt) - +new Date(a.modifiedAt))
-  }, [query, filter])
+    const base = filter === "all" ? records : records.filter((r) => r.type === filter)
+    const q = search.trim().toLowerCase()
+    const searched = q
+      ? base.filter((r) =>
+          [r.title, r.notes, r.fileName ?? ""].some((v) =>
+            v.toLowerCase().includes(q)
+          )
+        )
+      : base
+    return [...searched].sort((a, b) => b.date.localeCompare(a.date))
+  }, [records, filter, search])
 
-  const grouped = useMemo(() => {
-    return filtered.reduce<Record<string, LibraryItem[]>>((acc, item) => {
-      const day = item.modifiedAt.slice(0, 10)
-      acc[day] ??= []
-      acc[day].push(item)
+  const grouped = useMemo<Record<string, RecordItem[]>>(() => {
+    return filtered.reduce<Record<string, RecordItem[]>>((acc, r) => {
+      const key =
+        view === "year"
+          ? r.date.slice(0, 4)
+          : view === "month"
+            ? r.date.slice(0, 7)
+            : weekStartIso(r.date)
+      acc[key] ??= []
+      acc[key].push(r)
       return acc
     }, {})
-  }, [filtered])
+  }, [filtered, view])
 
-  function toggleDate(day: string) {
-    setOpenDates((prev) => ({ ...prev, [day]: !prev[day] }))
+  const groupKeys = Object.keys(grouped).sort((a, b) => b.localeCompare(a))
+  const latestRecord = filtered[0]
+
+  function keyForGroup(key: string) {
+    return `${view}:${key}`
   }
 
-  const dateKeys = Object.keys(grouped).sort((a, b) => +new Date(b) - +new Date(a))
+  function isOpen(key: string) {
+    return collapseMap[keyForGroup(key)] !== false
+  }
 
-  useEffect(() => {
-    const timer = window.setInterval(() => {
-      setUploads((prev) =>
-        prev.map((item) => {
-          if (item.status === "done") return item
-          const next = Math.min(item.progress + 12, 100)
-          return {
-            ...item,
-            progress: next,
-            status: next >= 100 ? "done" : "uploading",
-          }
-        })
+  function toggleGroup(key: string) {
+    setCollapseMap((prev) => ({ ...prev, [keyForGroup(key)]: !isOpen(key) }))
+  }
+
+  function openAddModal() {
+    setEditingId(null)
+    setTitle("")
+    setDate(new Date().toISOString().slice(0, 10))
+    setType("report")
+    setNotes("")
+    setFileName("")
+    setModalOpen(true)
+  }
+
+  function openEditModal(item: RecordItem) {
+    setEditingId(item.id)
+    setTitle(item.title)
+    setDate(item.date)
+    setType(item.type)
+    setNotes(item.notes)
+    setFileName(item.fileName ?? "")
+    setModalOpen(true)
+  }
+
+  function saveRecord() {
+    if (!title.trim() || !date) return
+    if (editingId) {
+      setRecords((prev) =>
+        prev.map((r) =>
+          r.id === editingId
+            ? { ...r, title: title.trim(), date, type, notes: notes.trim(), fileName }
+            : r
+        )
       )
-    }, 260)
-
-    return () => window.clearInterval(timer)
-  }, [])
-
-  function toUploadItem(file: File): UploadItem {
-    return {
-      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      file,
-      progress: 0,
-      status: "queued",
+    } else {
+      setRecords((prev) => [
+        {
+          id: Math.max(0, ...prev.map((r) => r.id)) + 1,
+          title: title.trim(),
+          date,
+          type,
+          notes: notes.trim(),
+          fileName,
+        },
+        ...prev,
+      ])
     }
-  }
-
-  function onFilesAdded(fileList: FileList | null) {
-    if (!fileList || fileList.length === 0) return
-    const next = Array.from(fileList).map(toUploadItem)
-    setUploads((prev) => [...next, ...prev])
-    setUploadOpen(true)
-  }
-
-  function removeUpload(id: string) {
-    setUploads((prev) => prev.filter((item) => item.id !== id))
-  }
-
-  function clearCompleted() {
-    setUploads((prev) => prev.filter((item) => item.status !== "done"))
+    setModalOpen(false)
   }
 
   return (
-    <div className="min-h-screen bg-white px-5 py-6 md:px-8">
-      <div className="mx-auto w-full max-w-6xl rounded-3xl border border-[#e8ecef] bg-white/95 p-5 shadow-[0_8px_30px_rgba(15,23,42,0.06)] backdrop-blur-sm md:p-7">
-        <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-3xl font-semibold tracking-tight text-[#171717]">Files</h1>
-          <button
-            type="button"
-            onClick={() => {
-              setUploadOpen(true)
-              fileInputRef.current?.click()
-            }}
-            className="inline-flex items-center gap-2 rounded-full bg-[#111] px-4 py-2 text-sm font-medium text-white shadow-[0_4px_12px_rgba(17,17,17,0.24)] transition-all hover:-translate-y-0.5 hover:bg-black"
-          >
-            <Upload className="size-4" />
-            Upload
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              onFilesAdded(e.target.files)
-              e.currentTarget.value = ""
-            }}
-          />
-        </div>
-
-        {uploadOpen && (
-          <section className="mb-5 overflow-hidden rounded-2xl border border-[#e7ebf0] bg-white shadow-[0_6px_18px_rgba(15,23,42,0.06)]">
-            <div className="flex items-center justify-between border-b border-[#eef1f4] px-4 py-3">
-              <h2 className="text-sm font-semibold text-gray-800">Upload files</h2>
-              <div className="flex items-center gap-2">
-                {uploads.some((item) => item.status === "done") && (
-                  <button
-                    type="button"
-                    onClick={clearCompleted}
-                    className="rounded-md px-2.5 py-1.5 text-xs font-medium text-gray-600 transition-colors hover:bg-gray-100 hover:text-gray-800"
-                  >
-                    Clear completed
-                  </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => setUploadOpen(false)}
-                  className="inline-flex size-7 items-center justify-center rounded-md text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700"
-                  aria-label="Close upload panel"
-                >
-                  <X className="size-4" />
-                </button>
-              </div>
-            </div>
-
-            <div className="grid gap-4 p-4 md:grid-cols-[1.1fr_1fr]">
-              <div
-                role="button"
-                tabIndex={0}
-                onClick={() => fileInputRef.current?.click()}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault()
-                    fileInputRef.current?.click()
-                  }
-                }}
-                onDragOver={(e) => {
-                  e.preventDefault()
-                  setDragOver(true)
-                }}
-                onDragLeave={() => setDragOver(false)}
-                onDrop={(e) => {
-                  e.preventDefault()
-                  setDragOver(false)
-                  onFilesAdded(e.dataTransfer.files)
-                }}
-                className={cn(
-                  "flex min-h-40 cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed px-5 text-center transition-all",
-                  dragOver
-                    ? "border-gray-500 bg-gray-50"
-                    : "border-[#d8dee5] bg-[#fbfcfd] hover:border-gray-400 hover:bg-gray-50"
-                )}
-              >
-                <UploadCloud className="mb-2 size-8 text-gray-500" />
-                <p className="text-sm font-semibold text-gray-800">
-                  Drag and drop files here
-                </p>
-                <p className="mt-1 text-xs text-gray-500">
-                  or click to browse (PDF, JPG, PNG, DOCX, XLSX)
-                </p>
-              </div>
-
-              <div className="rounded-xl border border-[#e9edf2] bg-[#fcfdff] p-3">
-                <div className="mb-2 flex items-center justify-between">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
-                    Upload queue
-                  </p>
-                  <p className="text-xs text-gray-500">{uploads.length} file(s)</p>
-                </div>
-                <div className="max-h-44 space-y-2 overflow-y-auto pr-1">
-                  {uploads.length === 0 ? (
-                    <p className="rounded-lg border border-dashed border-gray-200 bg-white px-3 py-4 text-xs text-gray-500">
-                      No files selected yet.
-                    </p>
-                  ) : (
-                    uploads.map((item) => (
-                      <article key={item.id} className="rounded-lg border border-gray-200 bg-white p-2.5">
-                        <div className="mb-1 flex items-center justify-between gap-2">
-                          <p className="truncate text-xs font-medium text-gray-800">
-                            {item.file.name}
-                          </p>
-                          <button
-                            type="button"
-                            onClick={() => removeUpload(item.id)}
-                            className="inline-flex size-5 items-center justify-center rounded text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700"
-                            aria-label={`Remove ${item.file.name}`}
-                          >
-                            <X className="size-3.5" />
-                          </button>
-                        </div>
-                        <div className="mb-1 h-1.5 w-full overflow-hidden rounded-full bg-gray-100">
-                          <div
-                            className="h-full rounded-full bg-gray-700 transition-all duration-300"
-                            style={{ width: `${item.progress}%` }}
-                          />
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <p className="text-[11px] text-gray-500">
-                            {formatSize(Math.max(1, Math.round(item.file.size / 1024)))}
-                          </p>
-                          <span className="inline-flex items-center gap-1 text-[11px] text-gray-500">
-                            {item.status === "done" ? (
-                              <>
-                                <CheckCircle2 className="size-3.5 text-emerald-600" />
-                                Completed
-                              </>
-                            ) : (
-                              <>
-                                <LoaderCircle className="size-3.5 animate-spin" />
-                                Uploading {item.progress}%
-                              </>
-                            )}
-                          </span>
-                        </div>
-                      </article>
-                    ))
+    <div className="min-h-screen bg-linear-to-b from-[#f8fafc] to-[#f2f5f8]">
+      <div className="px-3 pt-4 md:px-4">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 shadow-[0_1px_8px_rgba(15,23,42,0.04)] md:px-4">
+          <p className="text-base font-semibold tracking-tight text-slate-900 md:text-lg">
+            Medical Timeline
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="relative">
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-slate-400" />
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search records"
+                className="h-8 w-44 rounded-md border border-slate-200 bg-white pl-8 pr-2 text-xs text-slate-700 outline-none transition-colors focus:border-slate-300 md:w-52"
+              />
+            </label>
+            <div className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
+              {(["year", "month", "week"] as const).map((v) => (
+                <Button
+                  key={v}
+                  variant={view === v ? "default" : "ghost"}
+                  size="sm"
+                  className={cn(
+                    "h-7 rounded-md px-3 text-xs font-medium",
+                    view === v
+                      ? "bg-slate-900 text-white hover:bg-slate-900"
+                      : "text-slate-600 hover:bg-white hover:text-slate-900"
                   )}
+                  onClick={() => setView(v)}
+                >
+                  {v[0].toUpperCase() + v.slice(1)}
+                </Button>
+              ))}
+            </div>
+            <div className="inline-flex items-center gap-1 rounded-lg border border-slate-200 bg-slate-50 p-1">
+              {(["all", "report", "image", "prescription", "lab"] as const).map((f) => (
+                <Button
+                  key={f}
+                  variant={filter === f ? "default" : "ghost"}
+                  size="sm"
+                  className={cn(
+                    "h-7 rounded-md px-2.5 text-xs font-medium",
+                    filter === f
+                      ? "bg-slate-900 text-white hover:bg-slate-900"
+                      : "text-slate-600 hover:bg-white hover:text-slate-900"
+                  )}
+                  onClick={() => setFilter(f)}
+                >
+                  {f === "all" ? "All" : TYPE_META[f].label}
+                </Button>
+              ))}
+            </div>
+            <Button
+              size="sm"
+              className="h-8 rounded-md bg-slate-900 px-3 text-xs font-medium hover:bg-slate-800"
+              onClick={openAddModal}
+            >
+              <Plus className="mr-1 size-4" />
+              Add
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <div className="mx-auto max-w-4xl px-3 py-5 md:px-4 md:py-6">
+        {latestRecord && (
+          <section className="mb-4 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              Latest info
+            </p>
+            <div className="flex items-start gap-3">
+              <div className="mt-1 size-2 rounded-full border-2 border-emerald-700" />
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span>{TYPE_META[latestRecord.type].icon}</span>
+                  <p className="truncate text-sm font-semibold text-slate-900">
+                    {latestRecord.title}
+                  </p>
+                  <span
+                    className={cn(
+                      "rounded-full px-2 py-0.5 text-[10px] font-medium",
+                      TYPE_META[latestRecord.type].badge
+                    )}
+                  >
+                    {TYPE_META[latestRecord.type].label}
+                  </span>
                 </div>
+                <p className="text-xs text-slate-500">{fmtDate(latestRecord.date)}</p>
+                <p className="mt-1 text-sm leading-6 text-slate-600">{latestRecord.notes}</p>
+                {latestRecord.fileName && (
+                  <p className="mt-1 text-xs text-slate-500">File: {latestRecord.fileName}</p>
+                )}
               </div>
             </div>
           </section>
         )}
 
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="inline-flex rounded-xl bg-[#f3f4f6] p-1">
-            {(["all", "images", "files"] as const).map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => setFilter(tab)}
-                className={cn(
-                  "rounded-lg px-3 py-1.5 text-sm font-medium capitalize transition-all",
-                  filter === tab
-                    ? "bg-white text-gray-900 shadow-[0_1px_4px_rgba(15,23,42,0.08)]"
-                    : "text-gray-500 hover:text-gray-900"
+        {groupKeys.length === 0 ? (
+          <div className="rounded-lg border bg-white p-8 text-center text-sm text-slate-500">No records found.</div>
+        ) : (
+          groupKeys.map((groupKey) => {
+            const items = grouped[groupKey] ?? []
+            const open = isOpen(groupKey)
+            return (
+              <section key={groupKey} className="mb-3">
+                <button type="button" onClick={() => toggleGroup(groupKey)} className="flex w-full items-center gap-2 rounded-md border bg-white px-3 py-2 text-left">
+                  <ChevronRight className={cn("size-4 text-slate-500 transition-transform", open && "rotate-90")} />
+                  <span className="flex-1 text-sm font-medium text-slate-800">{groupKey}</span>
+                  <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">{items.length}</span>
+                </button>
+                {open && (
+                  <div className="relative mt-2 space-y-2 pl-6 before:absolute before:bottom-2 before:left-[11px] before:top-2 before:w-px before:bg-slate-200">
+                    {items.map((r: RecordItem) => (
+                      <article key={r.id} className="relative rounded-xl border bg-white p-3">
+                        <div className={cn("absolute -left-[18px] top-5 size-3 rounded-full border-2 bg-white", TYPE_META[r.type].dot)} />
+                        <div className="mb-2 flex items-start gap-2">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <span>{TYPE_META[r.type].icon}</span>
+                              <p className="truncate text-sm font-medium text-slate-900">{r.title}</p>
+                              <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-medium", TYPE_META[r.type].badge)}>{TYPE_META[r.type].label}</span>
+                            </div>
+                            <p className="text-xs text-slate-500">{fmtDate(r.date)}</p>
+                            <p className="mt-1 text-xs text-slate-600">{r.notes}</p>
+                            {r.fileName && (
+                              <p className="mt-1 text-xs text-slate-500">File: {r.fileName}</p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button size="sm" variant="outline" onClick={() => openEditModal(r)}>Edit</Button>
+                          <Button size="sm" variant="outline" onClick={() => setRecords((prev) => prev.filter((x) => x.id !== r.id))}>Delete</Button>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
                 )}
-              >
-                {tab}
-              </button>
-            ))}
-          </div>
+              </section>
+            )
+          })
+        )}
+      </div>
 
-          <div className="flex items-center gap-3">
-            <label className="relative block">
-              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-gray-400" />
-              <input
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search"
-                className="h-10 w-56 rounded-full border border-gray-200 bg-white pl-9 pr-3 text-sm outline-none transition-all focus:border-gray-300 focus:ring-4 focus:ring-gray-100 md:w-72"
-              />
-            </label>
-            <div className="inline-flex rounded-xl border border-gray-200 bg-white p-1 shadow-sm">
-              <button
-                type="button"
-                onClick={() => setView("list")}
-                className={cn(
-                  "rounded-md p-2 transition-colors",
-                  view === "list" ? "bg-gray-100 text-gray-900" : "text-gray-500"
-                )}
-                aria-label="List view"
-              >
-                <List className="size-4" />
-              </button>
-              <button
-                type="button"
-                onClick={() => setView("grid")}
-                className={cn(
-                  "rounded-md p-2 transition-colors",
-                  view === "grid" ? "bg-gray-100 text-gray-900" : "text-gray-500"
-                )}
-                aria-label="Grid view"
-              >
-                <Grid2X2 className="size-4" />
-              </button>
+      {modalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-xl border bg-white p-4">
+            <h3 className="mb-3 text-sm font-semibold text-slate-900">{editingId ? "Edit medical record" : "Add medical record"}</h3>
+            <div className="space-y-2">
+              <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Title" className="h-9 w-full rounded-md border px-3 text-sm" />
+              <div className="grid grid-cols-2 gap-2">
+                <DropdownMenu modal={false}>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-9 justify-between px-3 text-sm font-normal"
+                    >
+                      <span className="inline-flex items-center gap-2 truncate">
+                        <CalendarDays className="size-4 text-slate-500" />
+                        {date ? fmtDate(date) : "Pick date"}
+                      </span>
+                      <ChevronsUpDown className="size-4 text-slate-500" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent className="w-72 p-3" align="start">
+                    <DropdownMenuLabel className="px-0 pb-2 pt-0 text-xs text-slate-600">
+                      Calendar
+                    </DropdownMenuLabel>
+                    <input
+                      type="date"
+                      value={date}
+                      onChange={(e) => setDate(e.target.value)}
+                      className="h-9 w-full rounded-md border px-3 text-sm"
+                    />
+                  </DropdownMenuContent>
+                </DropdownMenu>
+
+                <DropdownMenu modal={false}>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-9 justify-between px-3 text-sm font-normal"
+                    >
+                      {TYPE_META[type].label}
+                      <ChevronsUpDown className="size-4 text-slate-500" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent className="w-44" align="start">
+                    {(["report", "image", "prescription", "lab", "document"] as const).map(
+                      (t) => (
+                        <DropdownMenuItem
+                          key={t}
+                          onSelect={() => setType(t)}
+                          className={cn(type === t && "bg-accent")}
+                        >
+                          {TYPE_META[t].label}
+                        </DropdownMenuItem>
+                      )
+                    )}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+              <label className="flex h-9 cursor-pointer items-center rounded-md border px-3 text-sm text-slate-600 hover:bg-slate-50">
+                <input
+                  type="file"
+                  className="hidden"
+                  onChange={(e) => setFileName(e.target.files?.[0]?.name ?? "")}
+                />
+                {fileName || "Upload file"}
+              </label>
+              <label className="block cursor-pointer rounded-md border border-dashed border-slate-300 bg-slate-50/70 p-3 hover:bg-slate-50">
+                <input
+                  type="file"
+                  className="hidden"
+                  onChange={(e) => setFileName(e.target.files?.[0]?.name ?? "")}
+                />
+                <div className="flex items-start gap-2">
+                  <UploadCloud className="mt-0.5 size-4 text-slate-500" />
+                  <div className="min-w-0">
+                    <p className="text-xs font-medium text-slate-700">
+                      Upload supporting file
+                    </p>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      Click to browse PDF, JPG, PNG, or DOCX
+                    </p>
+                    {fileName && (
+                      <span className="mt-2 inline-flex items-center gap-1 rounded-md border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700">
+                        <span className="max-w-[180px] truncate">{fileName}</span>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            setFileName("")
+                          }}
+                          className="rounded p-0.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                          aria-label="Remove selected file"
+                        >
+                          <X className="size-3" />
+                        </button>
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </label>
+              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Clinical notes" className="min-h-20 w-full rounded-md border px-3 py-2 text-sm" />
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setModalOpen(false)}>Cancel</Button>
+              <Button onClick={saveRecord}>Save record</Button>
             </div>
           </div>
         </div>
-
-        <div className="rounded-xl border border-gray-200">
-          <div className="hidden grid-cols-[minmax(240px,1.7fr)_1fr_120px] gap-3 border-b border-gray-200/80 px-4 py-3 text-sm font-medium text-gray-500 md:grid">
-            <span>Name</span>
-            <span>Modified</span>
-            <span>Size</span>
-          </div>
-
-          <div className="max-h-[65vh] overflow-y-auto">
-            {dateKeys.length === 0 ? (
-              <p className="px-4 py-8 text-sm text-muted-foreground">
-                No files found for this filter.
-              </p>
-            ) : (
-              <div className="divide-y divide-gray-100">
-                {dateKeys.map((day) => {
-                  const items = grouped[day]
-                  const isOpen = !!openDates[day]
-                  return (
-                    <section key={day}>
-                      <button
-                        type="button"
-                        onClick={() => toggleDate(day)}
-                        className="flex w-full items-center justify-between bg-linear-to-r from-[#f8fafc] to-[#f3f4f6] px-4 py-2 text-left transition-colors hover:from-[#f3f4f6] hover:to-[#eef2f7]"
-                      >
-                        <span className="inline-flex items-center gap-2 text-sm font-semibold text-gray-800">
-                          {isOpen ? (
-                            <ChevronDown className="size-4 text-gray-500" />
-                          ) : (
-                            <ChevronRight className="size-4 text-gray-500" />
-                          )}
-                          {formatDateHeading(day)}
-                          <span className="text-xs font-medium text-gray-500">
-                            ({items.length})
-                          </span>
-                        </span>
-                        <span className="text-xs text-gray-500">
-                          {formatSize(items.reduce((sum, item) => sum + item.sizeKb, 0))}
-                        </span>
-                      </button>
-
-                      {isOpen && (
-                        <div
-                          className={cn(
-                            "p-2",
-                            view === "grid" ? "grid gap-2 md:grid-cols-2" : "space-y-1"
-                          )}
-                        >
-                          {items.map((item) => (
-                            <article
-                              key={item.id}
-                              className={cn(
-                                "rounded-xl border border-transparent px-3 py-2 transition-all hover:border-[#e7ebf0] hover:bg-[#f8fafc]",
-                                view === "list"
-                                  ? "grid items-center gap-2 md:grid-cols-[minmax(240px,1.7fr)_1fr_120px]"
-                                  : "flex items-center justify-between"
-                              )}
-                            >
-                              <div className="min-w-0">
-                                <p className="inline-flex min-w-0 items-center gap-2 text-sm font-medium text-gray-800">
-                                  {iconForKind(item.kind)}
-                                  <span className="truncate">{item.name}</span>
-                                </p>
-                                {view === "grid" && (
-                                  <p className="mt-1 text-xs text-gray-500">{formatDateHeading(item.modifiedAt)}</p>
-                                )}
-                              </div>
-                              <p className="text-sm text-gray-600">
-                                {formatDateHeading(item.modifiedAt)} at {formatTime(item.modifiedAt)}
-                              </p>
-                              <p className="text-sm text-gray-600">{formatSize(item.sizeKb)}</p>
-                            </article>
-                          ))}
-                        </div>
-                      )}
-                    </section>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
+      )}
     </div>
   )
 }
